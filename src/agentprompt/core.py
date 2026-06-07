@@ -63,6 +63,29 @@ def _build_env() -> jinja2.Environment:
 _ENV = _build_env()
 
 
+def _undefined_name(msg: str) -> str:
+    """Best-effort extraction of the offending name from a Jinja2
+    ``UndefinedError`` message.
+
+    Jinja2's messages are stable across the two shapes we care about:
+
+    * a bare undefined variable -> ``"'q' is undefined"`` (we want ``q``)
+    * a missing attribute/key on a defined value ->
+      ``"'dict object' has no attribute 'name'"`` (we want ``name``)
+
+    Anything we don't recognise falls back to ``"<unknown>"`` rather than
+    raising, so a render failure never turns into a parser failure.
+    """
+    is_undefined = "' is undefined"
+    if msg.startswith("'") and msg.endswith(is_undefined):
+        return msg[1 : len(msg) - len(is_undefined)]
+    no_attr = " has no attribute '"
+    if no_attr in msg and msg.endswith("'"):
+        # The attribute name is the final quoted segment.
+        return msg[msg.rfind(no_attr) + len(no_attr) : -1]
+    return "<unknown>"
+
+
 @dataclass
 class Prompt:
     """A single template; render() returns a plain string.
@@ -74,7 +97,11 @@ class Prompt:
 
     source: str
     label: str = "<inline>"
-    _template: jinja2.Template | None = field(default=None, init=False, repr=False)
+    # The compiled template is an internal cache populated lazily on first
+    # render. Exclude it from ``__init__``, ``__repr__`` and ``__eq__`` so two
+    # Prompts with the same source/label stay equal regardless of whether
+    # either has been rendered yet.
+    _template: jinja2.Template | None = field(default=None, init=False, repr=False, compare=False)
 
     def render(self, context: Mapping[str, Any] | None = None) -> str:
         if self._template is None:
@@ -83,16 +110,9 @@ class Prompt:
         try:
             return self._template.render(**ctx)
         except jinja2.UndefinedError as exc:
-            # Pull the variable name out of "'q' is undefined".  Jinja2's
-            # UndefinedError message is stable: it always starts with the
-            # quoted variable name followed by " is undefined".
-            msg = str(exc)
-            name = "<unknown>"
-            suffix = "' is undefined"
-            if msg.startswith("'") and msg.endswith(suffix):
-                # Strip leading "'" and trailing suffix to get the name.
-                name = msg[1 : len(msg) - len(suffix)]
-            raise MissingVariableError(name, template_label=self.label) from None
+            raise MissingVariableError(
+                _undefined_name(str(exc)), template_label=self.label
+            ) from None
 
 
 @dataclass

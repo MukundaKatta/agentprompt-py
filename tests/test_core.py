@@ -49,7 +49,7 @@ def test_prompt_caches_compiled_template():
 
 def test_prompt_no_autoescape_for_html_like_content():
     """Templates aren't HTML — angle brackets must round-trip literally."""
-    p = Prompt('{{q}}')
+    p = Prompt("{{q}}")
     assert p.render({"q": "<script>alert(1)</script>"}) == "<script>alert(1)</script>"
 
 
@@ -57,6 +57,33 @@ def test_prompt_keeps_trailing_newline():
     """System prompts written with a trailing \\n should retain it."""
     p = Prompt("You are concise.\n")
     assert p.render({}) == "You are concise.\n"
+
+
+def test_prompt_equality_unaffected_by_render_cache():
+    """The lazily-compiled template is an internal cache; rendering one of two
+    otherwise-identical Prompts must not make them compare unequal."""
+    a = Prompt("{{x}}")
+    b = Prompt("{{x}}")
+    assert a == b
+    a.render({"x": 1})
+    assert a == b
+
+
+def test_prompt_missing_attribute_reports_attribute_name():
+    """A missing attribute on a defined value should surface the attribute
+    name, not '<unknown>'."""
+    p = Prompt("{{user.name}}")
+    with pytest.raises(MissingVariableError) as exc:
+        p.render({"user": {}})
+    assert exc.value.name == "name"
+
+
+def test_prompt_missing_key_reports_key_name():
+    """Same for subscript access on a defined mapping that lacks the key."""
+    p = Prompt("{{user['name']}}")
+    with pytest.raises(MissingVariableError) as exc:
+        p.render({"user": {}})
+    assert exc.value.name == "name"
 
 
 # ---------------------------------------------------------------------------
@@ -78,14 +105,7 @@ def test_messages_renders_role_tagged_list():
 
 
 def test_messages_supports_assistant_and_tool_roles():
-    out = (
-        Messages()
-        .system("sys")
-        .user("u")
-        .assistant("a")
-        .tool("t")
-        .render()
-    )
+    out = Messages().system("sys").user("u").assistant("a").tool("t").render()
     assert [m["role"] for m in out] == ["system", "user", "assistant", "tool"]
 
 
