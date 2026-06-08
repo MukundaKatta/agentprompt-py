@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import jinja2
 import pytest
 
-from agentprompt import Messages, MissingVariableError, Prompt
+from agentprompt import Messages, MissingVariableError, Prompt, Role
 
 # ---------------------------------------------------------------------------
 # Prompt
@@ -86,6 +87,34 @@ def test_prompt_missing_key_reports_key_name():
     assert exc.value.name == "name"
 
 
+def test_missing_variable_error_is_catchable_as_key_error():
+    """The README/docstring document ``MissingVariableError(KeyError)`` so callers
+    can catch the broad ``KeyError`` — guard that subclassing contract."""
+    with pytest.raises(KeyError) as exc:
+        Prompt("{{q}}").render({})
+    assert isinstance(exc.value, MissingVariableError)
+
+
+def test_prompt_default_template_label_is_inline():
+    """An unlabelled Prompt reports the ``<inline>`` sentinel in its error."""
+    with pytest.raises(MissingVariableError) as exc:
+        Prompt("{{q}}").render({})
+    assert exc.value.template_label == "<inline>"
+    assert "<inline>" in str(exc.value)
+
+
+def test_prompt_syntax_error_propagates_as_jinja_error():
+    """A malformed template is a programmer error and should surface as Jinja2's
+    ``TemplateSyntaxError`` rather than being masked as a MissingVariableError."""
+    with pytest.raises(jinja2.TemplateSyntaxError):
+        Prompt("{% if %}").render({})
+
+
+def test_prompt_renders_non_string_context_values():
+    """Non-string context values are coerced via Jinja2's str rendering."""
+    assert Prompt("{{n}}").render({"n": 42}) == "42"
+
+
 # ---------------------------------------------------------------------------
 # Messages builder
 # ---------------------------------------------------------------------------
@@ -146,3 +175,26 @@ def test_messages_returns_dict_shape_compatible_with_provider_sdks():
         assert isinstance(msg["role"], str)
         assert msg["role"].islower()
         assert isinstance(msg["content"], str)
+
+
+def test_messages_repr_lists_turn_roles_in_order():
+    """``repr`` should reflect the role sequence for quick debugging."""
+    m = Messages().system("a").user("b").assistant("c")
+    assert repr(m) == "Messages(turns=['system', 'user', 'assistant'])"
+
+
+def test_messages_tool_role_uses_lowercase_tool_value():
+    """The ``tool`` turn serialises to the wire-compatible ``role: 'tool'``."""
+    out = Messages().tool("result").render()
+    assert out == [{"role": "tool", "content": "result"}]
+
+
+# ---------------------------------------------------------------------------
+# Role enum
+# ---------------------------------------------------------------------------
+
+
+def test_role_values_match_provider_wire_format():
+    """Role values are lowercase to stay wire-compatible with provider SDKs."""
+    assert [r.value for r in Role] == ["system", "user", "assistant", "tool"]
+    assert Role.SYSTEM == "system"
